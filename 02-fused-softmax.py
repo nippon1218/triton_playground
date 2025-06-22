@@ -27,7 +27,8 @@ import triton
 import triton.language as tl
 from triton.runtime import driver
 
-DEVICE = triton.runtime.driver.active.get_active_torch_device()
+# 修复 Triton 3.1.0 API 兼容性
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def is_hip():
@@ -82,12 +83,11 @@ def naive_softmax(x):
 
 
 @triton.jit
-def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
-                   num_stages: tl.constexpr):
+def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr):
     # starting row of the program
     row_start = tl.program_id(0)
     row_step = tl.num_programs(0)
-    for row_idx in tl.range(row_start, n_rows, row_step, num_stages=num_stages):
+    for row_idx in tl.range(row_start, n_rows, row_step):
         # The stride represents how much we need to increase the pointer to advance 1 row
         row_start_ptr = input_ptr + row_idx * input_row_stride
         # The block size is the next power of two greater than n_cols, so we can fit each
@@ -112,7 +112,9 @@ def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n
 # %%
 # We can create a helper function that enqueues the kernel and its (meta-)arguments for any given input tensor.
 
-properties = driver.active.utils.get_device_properties(DEVICE.index)
+# 修复设备索引兼容性
+device_index = DEVICE.index if DEVICE.type == 'cuda' and DEVICE.index is not None else 0
+properties = driver.active.utils.get_device_properties(device_index)
 NUM_SM = properties["multiprocessor_count"]
 NUM_REGS = properties["max_num_regs"]
 SIZE_SMEM = properties["max_shared_mem"]
@@ -133,15 +135,12 @@ def softmax(x):
     # way so you don't have to come up with manual heuristics yourself.
     num_warps = 8
 
-    # Number of software pipelining stages.
-    num_stages = 4 if SIZE_SMEM > 200000 else 2
-
     # Allocate output
     y = torch.empty_like(x)
 
     # pre-compile kernel to get register usage and compute thread occupancy.
     kernel = softmax_kernel.warmup(y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE=BLOCK_SIZE,
-                                   num_stages=num_stages, num_warps=num_warps, grid=(1, ))
+                                   num_warps=num_warps, grid=(1, ))
     kernel._init_handles()
     n_regs = kernel.n_regs
     size_smem = kernel.metadata.shared
@@ -171,7 +170,7 @@ def softmax(x):
     num_programs = min(num_programs, n_rows)
 
     # Create a number of persistent programs.
-    kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
+    kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE)
     return y
 
 
