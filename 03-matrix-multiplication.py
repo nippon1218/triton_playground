@@ -154,16 +154,17 @@ import torch
 import triton
 import triton.language as tl
 
-DEVICE = triton.runtime.driver.active.get_active_torch_device()
+# Replace the problematic line with a direct device assignment
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def is_cuda():
-    return triton.runtime.driver.active.get_current_target().backend == "cuda"
+    return torch.cuda.is_available()
 
 
 def is_hip_cdna2():
-    target = triton.runtime.driver.active.get_current_target()
-    return target.backend == 'hip' and target.arch == 'gfx90a'
+    # Simplified check - we'll assume it's not a CDNA2 device
+    return False
 
 
 def get_cuda_autotune_config():

@@ -38,7 +38,8 @@ import torch
 import triton
 import triton.language as tl
 
-DEVICE = triton.runtime.driver.active.get_active_torch_device()
+# Replace the problematic line with a direct device assignment
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 @triton.jit
